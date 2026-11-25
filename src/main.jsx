@@ -47,6 +47,7 @@ function App() {
   const [depthReady, setDepthReady] = useState(false);
   const [depthView, setDepthView] = useState("map");
   const [depthError, setDepthError] = useState("");
+  const [depthDiagnostic, setDepthDiagnostic] = useState("");
   const [depthStrength, setDepthStrength] = useState(1.25);
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
@@ -107,28 +108,56 @@ function App() {
     return c;
   };
 
+  const describeDepthError = (err) => {
+    // ONNX Runtime can reject with a number or a plain object, not always Error.
+    if (typeof err === "number" || typeof err === "string") return String(err);
+    if (!err) return "Unknown error (empty rejection)";
+    const parts = [];
+    if (err.name) parts.push(`name=${err.name}`);
+    if (err.message) parts.push(`message=${err.message}`);
+    if (err.code !== undefined) parts.push(`code=${String(err.code)}`);
+    if (err.errno !== undefined) parts.push(`errno=${String(err.errno)}`);
+    if (err.stack) parts.push(`stack=${String(err.stack).slice(0, 1400)}`);
+    if (err.cause) {
+      const cause = err.cause;
+      parts.push(`cause=${typeof cause === "object" ? (cause.message || JSON.stringify(cause)) : String(cause)}`);
+    }
+    if (!parts.length) {
+      try { return JSON.stringify(err, Object.getOwnPropertyNames(err)); }
+      catch { return String(err); }
+    }
+    return parts.join("\n");
+  };
+
   const generateDepth = async () => {
     if(!videoUrl){setDepthError("Upload a video first.");return;}
-    setDepthBusy(true);setDepthError("");setDepthProgress(0);setDepthStatus("Loading AI model…");
+    let stage = "Starting depth estimation";
+    setDepthBusy(true);setDepthError("");setDepthDiagnostic("");setDepthProgress(0);setDepthStatus("Loading AI model…");
     try{
-      const estimator=await getDepthPipeline((p)=>{
+      stage = "Loading Transformers.js module";
+      const estimatorPromise = getDepthPipeline((p)=>{
         if(p && typeof p.progress==="number") setDepthProgress(Math.round(p.progress));
         if(p?.status) setDepthStatus(p.status==="progress"?"Downloading AI model…":String(p.status));
       });
+      stage = "Creating Depth Anything V2 pipeline / loading ONNX model";
+      const estimator = await estimatorPromise;
       setDepthStatus("Analysing current frame…");
+      stage = "Extracting current video frame";
       const source=getCurrentFrame();
+      stage = `Running depth inference (${source.width}x${source.height})`;
       const result=await estimator(source);
+      stage = "Validating model output";
       const depth=result?.depth;
       if(!depth || !depth.data || !depth.width || !depth.height){
         throw new Error("Depth model returned an empty or invalid image result.");
       }
 
-      // Transformers.js v3 returns depth as a RawImage, not an HTMLCanvasElement.
-      // Convert its pixel buffer into a browser canvas explicitly.
+      stage = "Converting RawImage pixels to canvas";
       const w=depth.width, h=depth.height, channels=depth.channels || 1;
       const dc=document.createElement("canvas");
       dc.width=w; dc.height=h;
       const dctx=dc.getContext("2d",{willReadFrequently:true});
+      if (!dctx) throw new Error("Could not create a 2D canvas context for the depth map.");
       const imageData=dctx.createImageData(w,h);
       const input=depth.data;
       for(let i=0,j=0;i<w*h;i++,j+=4){
@@ -143,16 +172,18 @@ function App() {
       }
       dctx.putImageData(imageData,0,0);
 
+      stage = "Preparing source frame for depth comparison";
       const sc=document.createElement("canvas");sc.width=w;sc.height=h;
-      sc.getContext("2d").drawImage(source,0,0,w,h);
+      const sctx=sc.getContext("2d");
+      if (!sctx) throw new Error("Could not create a 2D canvas context for the source frame.");
+      sctx.drawImage(source,0,0,w,h);
       depthCanvasRef.current=dc;sourceCanvasRef.current=sc;
       setDepthReady(true);setDepthStatus(`Depth map ready · ${w} × ${h}`);setDepthProgress(100);
     }catch(err){
-      console.error("NOVA VFX depth engine error:",err);
-      const details = err instanceof Error
-        ? `${err.name}: ${err.message}`
-        : (typeof err === "string" ? err : JSON.stringify(err));
-      setDepthError(details || "Unknown depth engine error. Check the browser console.");
+      console.error("NOVA VFX depth engine diagnostic:", { stage, error: err });
+      const details = describeDepthError(err);
+      setDepthDiagnostic(`FAILED STAGE: ${stage}`);
+      setDepthError(details || "Unknown depth engine error.");
       setDepthStatus("Depth engine error");
     }finally{setDepthBusy(false);}
   };
@@ -206,18 +237,18 @@ function App() {
   const Slider=({label,value,setValue,min=0,max=100,suffix="%"})=><label className="control"><span>{label}<b>{value}{suffix}</b></span><input type="range" min={min} max={max} value={value} onChange={e=>setValue(Number(e.target.value))}/></label>;
 
   return <div className="app-shell">
-    <header className="topbar"><div className="brand"><div className="brand-mark">N</div><span>NOVA <i>VFX</i></span><small>STUDIO / 0.2</small></div><div className="top-actions"><span className="status-dot"></span><span>{status}</span><button className="export" onClick={()=>{if(canvasRef.current){const a=document.createElement("a");a.download="nova-vfx-frame.png";a.href=canvasRef.current.toDataURL("image/png");a.click();}}}><Download size={15}/> Export frame</button></div></header>
+    <header className="topbar"><div className="brand"><div className="brand-mark">N</div><span>NOVA <i>VFX</i></span><small>STUDIO / 0.2.2</small></div><div className="top-actions"><span className="status-dot"></span><span>{status}</span><button className="export" onClick={()=>{if(canvasRef.current){const a=document.createElement("a");a.download="nova-vfx-frame.png";a.href=canvasRef.current.toDataURL("image/png");a.click();}}}><Download size={15}/> Export frame</button></div></header>
     <main className="layout">
       <aside className="sidebar"><div className="section-label">WORKSPACE</div><div className="nav-item active"><Film size={17}/> VFX Workspace</div><div className="nav-item"><Sparkles size={17}/> Relight Lab <em>Preview</em></div><div className="nav-item"><SlidersHorizontal size={17}/> Color Controls</div><div className="side-divider"></div><div className="section-label">PROJECT</div><div className="project-card"><div className="project-icon"><Film size={17}/></div><div><b>{fileName||"Untitled footage"}</b><small>{videoUrl?"Video loaded":"No media imported"}</small></div></div><div className="side-note"><Zap size={15}/><p><b>Local processing</b><br/>Video frames are analysed in your browser. The AI model downloads once.</p></div></aside>
       <section className="center">
-        <div className="page-heading"><div><div className="eyebrow">AI-ASSISTED VIDEO LOOK DEVELOPMENT</div><h1>Relight <span>Studio</span></h1><p>Depth-aware look development for your footage.</p></div><div className="version-pill">BETA 0.2</div></div>
+        <div className="page-heading"><div><div className="eyebrow">AI-ASSISTED VIDEO LOOK DEVELOPMENT</div><h1>Relight <span>Studio</span></h1><p>Depth-aware look development for your footage.</p></div><div className="version-pill">BETA 0.2.2</div></div>
         <div className="viewer-card"><div className="viewer-toolbar"><span><span className="live-dot"></span> VIEWPORT</span><span>Live preview</span></div><div className="viewer">{videoUrl?<canvas ref={canvasRef} width="960" height="540"/>:<div className="empty-state"><div className="upload-orb"><Upload size={25}/></div><h2>Bring your footage to life</h2><p>Upload a video to preview the NOVA neon relight look.</p><label className="primary-btn"><Upload size={16}/> Choose video<input type="file" accept="video/*" onChange={e=>loadFile(e.target.files?.[0])}/></label><small>MP4 · MOV · WEBM · local browser preview</small></div>}</div>{videoUrl&&<div className="transport"><button onClick={togglePlay}>{playing?<Pause size={17}/>:<Play size={17}/>}</button><span>{fileName}</span><span className="transport-hint">Preview</span></div>}</div>
         <div className="timeline-card"><div className="timeline-head"><b>FOOTAGE</b><span>{videoUrl?"Source video":"Waiting for media"}</span></div><div className="timeline-track"><div className="track-label">V1</div><div className="track-content">{videoUrl?<div className="clip-block">{fileName}</div>:<div className="track-empty">Import footage to begin</div>}</div></div></div>
         <section className="depth-card">
           <div className="depth-heading"><div><div className="panel-label">AI DEPTH ENGINE</div><h2><Layers3 size={20}/> Depth Map <span>+ 3D View</span></h2><p>Depth Anything V2 Small · AI inference in your browser</p></div><span className={`depth-badge ${depthReady?"ready":""}`}>{depthReady?"GENERATED":"AI ENGINE"}</span></div>
           <div className="depth-actions"><button className="primary-btn" onClick={generateDepth} disabled={!videoUrl||depthBusy}><Brain size={16}/>{depthBusy?"Generating…":"Generate Depth Map"}</button><button className="secondary-btn" onClick={exportDepth} disabled={!depthReady}><Download size={15}/> Export PNG</button></div>
           {depthBusy&&<div className="progress-wrap"><div className="progress-label"><span>{depthStatus}</span><b>{depthProgress}%</b></div><div className="progress-bar"><i style={{width:`${depthProgress}%`}}/></div></div>}
-          {depthError&&<div className="depth-error">{depthError}</div>}
+          {depthError&&<div className="depth-error"><b>{depthDiagnostic}</b><pre>{depthError}</pre></div>}
           {depthReady?<><div className="depth-tabs"><button className={depthView==="map"?"active":""} onClick={()=>setDepthView("map")}><ImageIcon size={15}/> Depth Map</button><button className={depthView==="3d"?"active":""} onClick={()=>setDepthView("3d")}><Box size={15}/> 3D Point Cloud</button></div>{depthView==="map"?<div className="depth-result"><div><small>ORIGINAL FRAME</small><img src={sourceCanvasRef.current?.toDataURL()||""} alt="Original video frame"/></div><div><small>AI DEPTH MAP</small><img src={depthCanvasRef.current?.toDataURL()||""} alt="Generated grayscale depth map"/></div></div>:<><div className="three-host" ref={threeHostRef}/><label className="control depth-slider"><span>3D depth strength <b>{depthStrength.toFixed(2)}×</b></span><input type="range" min="0.2" max="3" step="0.05" value={depthStrength} onChange={e=>setDepthStrength(Number(e.target.value))}/></label><p className="depth-hint">Drag to orbit · Pinch or scroll to zoom. This is a depth-based point-cloud preview, not a complete editable 3D scene.</p></>}</>:<div className="depth-placeholder"><Layers3 size={28}/><b>No depth map generated</b><span>Upload a video, pause on a frame, then generate its AI depth map.</span></div>}
           <div className="depth-footnote">First run downloads the AI model (about 100 MB). Processing speed depends on your device. Start with a short video and pause on a clear frame.</div>
         </section>
