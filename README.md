@@ -32,3 +32,22 @@ npm run build
 
 ## Model
 `onnx-community/depth-anything-v2-small-ONNX` via `@huggingface/transformers`.
+
+
+## 0.2.1 fix
+- Fixed depth output conversion: Transformers.js returns a RawImage buffer, which is now converted directly to canvas pixels.
+- Uses Q8 model inference to reduce browser memory pressure.
+- Displays detailed runtime errors instead of hiding them behind a generic message.
+
+
+## Version 0.2.3 browser runtime update
+- Adds explicit failure-stage reporting for the browser depth pipeline.
+- Preserves the original ONNX/Transformers.js error details, including numeric and plain-object rejections.
+- This is a diagnostic build; it identifies the failing stage rather than claiming the inference issue is fixed.
+
+
+## Version 0.2.3 runtime update
+- Uses the WASM browser backend explicitly with one thread for broader compatibility on static hosting.
+- Checks the model repository for available quantized ONNX variants before loading.
+- Prefers Q8 for quality and falls back to Q4 only when Q8 is not published.
+- Keeps the original depth estimation, PNG export, and Three.js point-cloud workflow.
