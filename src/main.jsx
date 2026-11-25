@@ -11,27 +11,20 @@ let depthPipelinePromise = null;
 async function getDepthPipeline(onProgress) {
   if (!depthPipelinePromise) {
     depthPipelinePromise = (async () => {
-      const { pipeline, env, ModelRegistry } = await import("@huggingface/transformers");
+      // ModelRegistry is not exported by every Transformers.js v3 release.
+      // Avoid that optional preflight API and let pipeline() resolve the model.
+      const { pipeline, env } = await import("@huggingface/transformers");
 
-      // Use the most compatible browser backend. A single WASM thread avoids
-      // SharedArrayBuffer / cross-origin-isolation requirements on static hosts.
       env.allowLocalModels = false;
       env.backends.onnx.wasm.numThreads = 1;
       env.backends.onnx.wasm.proxy = false;
 
-      // Confirm the model actually publishes the requested ONNX variants.
-      const available = await ModelRegistry.get_available_dtypes(MODEL_ID);
-      const candidates = ["q8", "q4"].filter((candidate) => available.includes(candidate));
-      if (!candidates.length) {
-        throw new Error(`No supported quantized ONNX weights found for ${MODEL_ID}. Available: ${available.join(", ") || "none"}`);
-      }
-
-      // Prefer Q8 for better quality. If the browser cannot initialize that
-      // session, retry once with the smaller Q4 weights to reduce memory use.
+      // Prefer Q8 quality; retry with Q4 if the browser cannot initialize Q8.
+      const candidates = ["q8", "q4"];
       const failures = [];
       for (const dtype of candidates) {
         try {
-          onProgress?.({ status: "selected", dtype, available });
+          onProgress?.({ status: "selected", dtype });
           const pipe = await pipeline("depth-estimation", MODEL_ID, {
             device: "wasm",
             dtype,
@@ -40,13 +33,14 @@ async function getDepthPipeline(onProgress) {
           onProgress?.({ status: "loaded", dtype });
           return pipe;
         } catch (err) {
-          failures.push(`${dtype}: ${err?.message || String(err)}`);
+          failures.push(`${dtype}: ${err?.name || "Error"}: ${err?.message || String(err)}`);
           if (dtype === candidates[candidates.length - 1]) {
             throw new Error(`Could not initialize Depth Anything V2. ${failures.join(" | ")}`);
           }
           onProgress?.({ status: "fallback", dtype: "q4" });
         }
       }
+      throw new Error("No compatible Depth Anything V2 model variant could be initialized.");
     })().catch((err) => {
       depthPipelinePromise = null;
       throw err;
