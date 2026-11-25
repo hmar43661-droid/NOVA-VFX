@@ -1,47 +1,34 @@
-# NOVA VFX Studio — Starter 0.1
+# NOVA VFX Studio — 0.2
 
-A first browser-based prototype for a neon relighting workflow.
+Browser-based neon look-development prototype with an AI depth-estimation milestone.
 
-## What works in this prototype
-- Import a local video file (MP4, MOV, WEBM supported by the browser).
-- Preview playback.
-- Real-time stylized cyan / magenta color-light overlays.
-- Neon, Cyber, and Ice looks.
-- Contrast and saturation controls.
-- Export the current processed preview frame as PNG.
-- Video stays local in the browser; there is no server upload.
+## Existing features
+- Import and preview local video.
+- Neon, Cyber, and Ice color-light looks.
+- Contrast, saturation, cyan, magenta and intensity controls.
+- Export current processed preview frame as PNG.
+
+## New in 0.2
+- AI depth estimation for the current paused video frame using Depth Anything V2 Small through Transformers.js.
+- Side-by-side original frame and generated grayscale depth map.
+- Export depth map as PNG.
+- Interactive Three.js point-cloud preview generated from the depth map; drag to orbit and zoom.
+- Model assets download from Hugging Face on first use; processing runs in the browser.
 
 ## Important limitations
-This is a visual prototype, not a Beeble replacement yet. It does **not** currently perform:
-- AI person segmentation / rotoscoping
-- Depth or normal map estimation
-- True 3D reconstruction or physically based relighting
-- Full processed-video export
-- Cloud GPU processing
-
-The current effect is a screen-space color overlay. The UI labels the missing AI/3D engine features honestly.
+This is not a full Beeble replacement. Depth estimation currently runs on one frame at a time. The 3D view is a depth-based point cloud, not a complete textured mesh or scene reconstruction. Subject segmentation, temporal-consistent video depth, physically based relighting, full video rendering, and cloud GPU processing are not included yet.
 
 ## Run locally
-Install Node.js 20+ and then:
-
+Node.js 20+:
 ```bash
 npm install
 npm run dev
 ```
-
-Open the local URL printed by Vite.
 
 ## Build
 ```bash
 npm run build
 ```
 
-## Next engineering milestone
-Add a backend job API and a GPU inference pipeline:
-1. FastAPI upload/job service.
-2. FFmpeg decode/encode pipeline.
-3. Person segmentation + depth estimation models.
-4. C++/CUDA processing module for frame operations.
-5. Real subject-aware relighting and video export.
-
-Do not describe the current browser overlay as AI relighting; it is only a look-development preview.
+## Model
+`onnx-community/depth-anything-v2-small-ONNX` via `@huggingface/transformers`.
