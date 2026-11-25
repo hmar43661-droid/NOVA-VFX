@@ -11,11 +11,13 @@ let depthPipelinePromise = null;
 async function getDepthPipeline(onProgress) {
   if (!depthPipelinePromise) {
     depthPipelinePromise = (async () => {
-      // ModelRegistry is not exported by every Transformers.js v3 release.
-      // Avoid that optional preflight API and let pipeline() resolve the model.
+      // Keep the browser runtime and its WASM assets on the same pinned Transformers.js release.
       const { pipeline, env } = await import("@huggingface/transformers");
 
       env.allowLocalModels = false;
+      // Pin the Transformers.js package and its matching ONNX Runtime WASM assets.
+      // This avoids mixing a newly-resolved npm runtime with stale/mismatched WASM files.
+      env.backends.onnx.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2/dist/";
       env.backends.onnx.wasm.numThreads = 1;
       env.backends.onnx.wasm.proxy = false;
 
