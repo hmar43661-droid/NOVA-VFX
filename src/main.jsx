@@ -13,6 +13,7 @@ async function getDepthPipeline(onProgress) {
     depthPipelinePromise = import("@huggingface/transformers").then(async ({ pipeline, env }) => {
       env.allowLocalModels = false;
       return pipeline("depth-estimation", MODEL_ID, {
+        dtype: "q8",
         progress_callback: (p) => onProgress?.(p)
       });
     }).catch((err) => {
@@ -117,20 +118,41 @@ function App() {
       setDepthStatus("Analysing current frame…");
       const source=getCurrentFrame();
       const result=await estimator(source);
-      const depth=result.depth;
-      const depthCanvas=typeof depth.toCanvas==="function" ? depth.toCanvas() : null;
-      if(!depthCanvas) throw new Error("The model returned depth data in an unsupported format.");
-      const w=depthCanvas.width,h=depthCanvas.height;
-      const dc=document.createElement("canvas");dc.width=w;dc.height=h;
-      const dctx=dc.getContext("2d",{willReadFrequently:true});dctx.drawImage(depthCanvas,0,0,w,h);
-      const pixels=dctx.getImageData(0,0,w,h);
+      const depth=result?.depth;
+      if(!depth || !depth.data || !depth.width || !depth.height){
+        throw new Error("Depth model returned an empty or invalid image result.");
+      }
+
+      // Transformers.js v3 returns depth as a RawImage, not an HTMLCanvasElement.
+      // Convert its pixel buffer into a browser canvas explicitly.
+      const w=depth.width, h=depth.height, channels=depth.channels || 1;
+      const dc=document.createElement("canvas");
+      dc.width=w; dc.height=h;
+      const dctx=dc.getContext("2d",{willReadFrequently:true});
+      const imageData=dctx.createImageData(w,h);
+      const input=depth.data;
+      for(let i=0,j=0;i<w*h;i++,j+=4){
+        const k=i*channels;
+        const r=input[k] ?? 0;
+        const g=channels>1 ? input[k+1] : r;
+        const b=channels>2 ? input[k+2] : r;
+        imageData.data[j]=r;
+        imageData.data[j+1]=g;
+        imageData.data[j+2]=b;
+        imageData.data[j+3]=255;
+      }
+      dctx.putImageData(imageData,0,0);
+
       const sc=document.createElement("canvas");sc.width=w;sc.height=h;
       sc.getContext("2d").drawImage(source,0,0,w,h);
       depthCanvasRef.current=dc;sourceCanvasRef.current=sc;
       setDepthReady(true);setDepthStatus(`Depth map ready · ${w} × ${h}`);setDepthProgress(100);
     }catch(err){
-      console.error(err);
-      setDepthError(err?.message || "Depth estimation failed. Check your connection and try again.");
+      console.error("NOVA VFX depth engine error:",err);
+      const details = err instanceof Error
+        ? `${err.name}: ${err.message}`
+        : (typeof err === "string" ? err : JSON.stringify(err));
+      setDepthError(details || "Unknown depth engine error. Check the browser console.");
       setDepthStatus("Depth engine error");
     }finally{setDepthBusy(false);}
   };
