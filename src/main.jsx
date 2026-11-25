@@ -11,13 +11,16 @@ let depthPipelinePromise = null;
 async function getDepthPipeline(onProgress) {
   if (!depthPipelinePromise) {
     depthPipelinePromise = (async () => {
-      // Keep the browser runtime and its WASM assets on the same pinned Transformers.js release.
+      // Load the pinned Transformers.js v3 runtime.
       const { pipeline, env } = await import("@huggingface/transformers");
 
       env.allowLocalModels = false;
-      // Pin the Transformers.js package and its matching ONNX Runtime WASM assets.
-      // This avoids mixing a newly-resolved npm runtime with stale/mismatched WASM files.
-      env.backends.onnx.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2/dist/";
+
+      // IMPORTANT: Do not override wasmPaths here.
+      // Transformers.js v3.7.2 configures the matching onnxruntime-web WASM
+      // asset URLs itself. Pointing this to the Transformers package's dist
+      // folder is incorrect: the ORT .wasm/.mjs files live in onnxruntime-web.
+      // A wrong path prevents ONNX Runtime from creating its WASM session.
       env.backends.onnx.wasm.numThreads = 1;
       env.backends.onnx.wasm.proxy = false;
 
@@ -264,11 +267,11 @@ function App() {
   const Slider=({label,value,setValue,min=0,max=100,suffix="%"})=><label className="control"><span>{label}<b>{value}{suffix}</b></span><input type="range" min={min} max={max} value={value} onChange={e=>setValue(Number(e.target.value))}/></label>;
 
   return <div className="app-shell">
-    <header className="topbar"><div className="brand"><div className="brand-mark">N</div><span>NOVA <i>VFX</i></span><small>STUDIO / 0.2.3</small></div><div className="top-actions"><span className="status-dot"></span><span>{status}</span><button className="export" onClick={()=>{if(canvasRef.current){const a=document.createElement("a");a.download="nova-vfx-frame.png";a.href=canvasRef.current.toDataURL("image/png");a.click();}}}><Download size={15}/> Export frame</button></div></header>
+    <header className="topbar"><div className="brand"><div className="brand-mark">N</div><span>NOVA <i>VFX</i></span><small>STUDIO / 0.2.6</small></div><div className="top-actions"><span className="status-dot"></span><span>{status}</span><button className="export" onClick={()=>{if(canvasRef.current){const a=document.createElement("a");a.download="nova-vfx-frame.png";a.href=canvasRef.current.toDataURL("image/png");a.click();}}}><Download size={15}/> Export frame</button></div></header>
     <main className="layout">
       <aside className="sidebar"><div className="section-label">WORKSPACE</div><div className="nav-item active"><Film size={17}/> VFX Workspace</div><div className="nav-item"><Sparkles size={17}/> Relight Lab <em>Preview</em></div><div className="nav-item"><SlidersHorizontal size={17}/> Color Controls</div><div className="side-divider"></div><div className="section-label">PROJECT</div><div className="project-card"><div className="project-icon"><Film size={17}/></div><div><b>{fileName||"Untitled footage"}</b><small>{videoUrl?"Video loaded":"No media imported"}</small></div></div><div className="side-note"><Zap size={15}/><p><b>Local processing</b><br/>Video frames are analysed in your browser. The AI model downloads once.</p></div></aside>
       <section className="center">
-        <div className="page-heading"><div><div className="eyebrow">AI-ASSISTED VIDEO LOOK DEVELOPMENT</div><h1>Relight <span>Studio</span></h1><p>Depth-aware look development for your footage.</p></div><div className="version-pill">BETA 0.2.3</div></div>
+        <div className="page-heading"><div><div className="eyebrow">AI-ASSISTED VIDEO LOOK DEVELOPMENT</div><h1>Relight <span>Studio</span></h1><p>Depth-aware look development for your footage.</p></div><div className="version-pill">BETA 0.2.6</div></div>
         <div className="viewer-card"><div className="viewer-toolbar"><span><span className="live-dot"></span> VIEWPORT</span><span>Live preview</span></div><div className="viewer">{videoUrl?<canvas ref={canvasRef} width="960" height="540"/>:<div className="empty-state"><div className="upload-orb"><Upload size={25}/></div><h2>Bring your footage to life</h2><p>Upload a video to preview the NOVA neon relight look.</p><label className="primary-btn"><Upload size={16}/> Choose video<input type="file" accept="video/*" onChange={e=>loadFile(e.target.files?.[0])}/></label><small>MP4 · MOV · WEBM · local browser preview</small></div>}</div>{videoUrl&&<div className="transport"><button onClick={togglePlay}>{playing?<Pause size={17}/>:<Play size={17}/>}</button><span>{fileName}</span><span className="transport-hint">Preview</span></div>}</div>
         <div className="timeline-card"><div className="timeline-head"><b>FOOTAGE</b><span>{videoUrl?"Source video":"Waiting for media"}</span></div><div className="timeline-track"><div className="track-label">V1</div><div className="track-content">{videoUrl?<div className="clip-block">{fileName}</div>:<div className="track-empty">Import footage to begin</div>}</div></div></div>
         <section className="depth-card">
