@@ -10,13 +10,44 @@ let depthPipelinePromise = null;
 
 async function getDepthPipeline(onProgress) {
   if (!depthPipelinePromise) {
-    depthPipelinePromise = import("@huggingface/transformers").then(async ({ pipeline, env }) => {
+    depthPipelinePromise = (async () => {
+      const { pipeline, env, ModelRegistry } = await import("@huggingface/transformers");
+
+      // Use the most compatible browser backend. A single WASM thread avoids
+      // SharedArrayBuffer / cross-origin-isolation requirements on static hosts.
       env.allowLocalModels = false;
-      return pipeline("depth-estimation", MODEL_ID, {
-        dtype: "q8",
-        progress_callback: (p) => onProgress?.(p)
-      });
-    }).catch((err) => {
+      env.backends.onnx.wasm.numThreads = 1;
+      env.backends.onnx.wasm.proxy = false;
+
+      // Confirm the model actually publishes the requested ONNX variants.
+      const available = await ModelRegistry.get_available_dtypes(MODEL_ID);
+      const candidates = ["q8", "q4"].filter((candidate) => available.includes(candidate));
+      if (!candidates.length) {
+        throw new Error(`No supported quantized ONNX weights found for ${MODEL_ID}. Available: ${available.join(", ") || "none"}`);
+      }
+
+      // Prefer Q8 for better quality. If the browser cannot initialize that
+      // session, retry once with the smaller Q4 weights to reduce memory use.
+      const failures = [];
+      for (const dtype of candidates) {
+        try {
+          onProgress?.({ status: "selected", dtype, available });
+          const pipe = await pipeline("depth-estimation", MODEL_ID, {
+            device: "wasm",
+            dtype,
+            progress_callback: (p) => onProgress?.(p)
+          });
+          onProgress?.({ status: "loaded", dtype });
+          return pipe;
+        } catch (err) {
+          failures.push(`${dtype}: ${err?.message || String(err)}`);
+          if (dtype === candidates[candidates.length - 1]) {
+            throw new Error(`Could not initialize Depth Anything V2. ${failures.join(" | ")}`);
+          }
+          onProgress?.({ status: "fallback", dtype: "q4" });
+        }
+      }
+    })().catch((err) => {
       depthPipelinePromise = null;
       throw err;
     });
@@ -137,7 +168,7 @@ function App() {
       stage = "Loading Transformers.js module";
       const estimatorPromise = getDepthPipeline((p)=>{
         if(p && typeof p.progress==="number") setDepthProgress(Math.round(p.progress));
-        if(p?.status) setDepthStatus(p.status==="progress"?"Downloading AI model…":String(p.status));
+        if(p?.status) setDepthStatus(p.status==="progress"?"Downloading AI model…":(p.status==="selected"?`Preparing ${p.dtype.toUpperCase()} model…`:p.status==="fallback"?"Q8 unavailable; trying Q4…":p.status==="loaded"?`AI model loaded (${p.dtype.toUpperCase()})`:String(p.status)));
       });
       stage = "Creating Depth Anything V2 pipeline / loading ONNX model";
       const estimator = await estimatorPromise;
@@ -237,11 +268,11 @@ function App() {
   const Slider=({label,value,setValue,min=0,max=100,suffix="%"})=><label className="control"><span>{label}<b>{value}{suffix}</b></span><input type="range" min={min} max={max} value={value} onChange={e=>setValue(Number(e.target.value))}/></label>;
 
   return <div className="app-shell">
-    <header className="topbar"><div className="brand"><div className="brand-mark">N</div><span>NOVA <i>VFX</i></span><small>STUDIO / 0.2.2</small></div><div className="top-actions"><span className="status-dot"></span><span>{status}</span><button className="export" onClick={()=>{if(canvasRef.current){const a=document.createElement("a");a.download="nova-vfx-frame.png";a.href=canvasRef.current.toDataURL("image/png");a.click();}}}><Download size={15}/> Export frame</button></div></header>
+    <header className="topbar"><div className="brand"><div className="brand-mark">N</div><span>NOVA <i>VFX</i></span><small>STUDIO / 0.2.3</small></div><div className="top-actions"><span className="status-dot"></span><span>{status}</span><button className="export" onClick={()=>{if(canvasRef.current){const a=document.createElement("a");a.download="nova-vfx-frame.png";a.href=canvasRef.current.toDataURL("image/png");a.click();}}}><Download size={15}/> Export frame</button></div></header>
     <main className="layout">
       <aside className="sidebar"><div className="section-label">WORKSPACE</div><div className="nav-item active"><Film size={17}/> VFX Workspace</div><div className="nav-item"><Sparkles size={17}/> Relight Lab <em>Preview</em></div><div className="nav-item"><SlidersHorizontal size={17}/> Color Controls</div><div className="side-divider"></div><div className="section-label">PROJECT</div><div className="project-card"><div className="project-icon"><Film size={17}/></div><div><b>{fileName||"Untitled footage"}</b><small>{videoUrl?"Video loaded":"No media imported"}</small></div></div><div className="side-note"><Zap size={15}/><p><b>Local processing</b><br/>Video frames are analysed in your browser. The AI model downloads once.</p></div></aside>
       <section className="center">
-        <div className="page-heading"><div><div className="eyebrow">AI-ASSISTED VIDEO LOOK DEVELOPMENT</div><h1>Relight <span>Studio</span></h1><p>Depth-aware look development for your footage.</p></div><div className="version-pill">BETA 0.2.2</div></div>
+        <div className="page-heading"><div><div className="eyebrow">AI-ASSISTED VIDEO LOOK DEVELOPMENT</div><h1>Relight <span>Studio</span></h1><p>Depth-aware look development for your footage.</p></div><div className="version-pill">BETA 0.2.3</div></div>
         <div className="viewer-card"><div className="viewer-toolbar"><span><span className="live-dot"></span> VIEWPORT</span><span>Live preview</span></div><div className="viewer">{videoUrl?<canvas ref={canvasRef} width="960" height="540"/>:<div className="empty-state"><div className="upload-orb"><Upload size={25}/></div><h2>Bring your footage to life</h2><p>Upload a video to preview the NOVA neon relight look.</p><label className="primary-btn"><Upload size={16}/> Choose video<input type="file" accept="video/*" onChange={e=>loadFile(e.target.files?.[0])}/></label><small>MP4 · MOV · WEBM · local browser preview</small></div>}</div>{videoUrl&&<div className="transport"><button onClick={togglePlay}>{playing?<Pause size={17}/>:<Play size={17}/>}</button><span>{fileName}</span><span className="transport-hint">Preview</span></div>}</div>
         <div className="timeline-card"><div className="timeline-head"><b>FOOTAGE</b><span>{videoUrl?"Source video":"Waiting for media"}</span></div><div className="timeline-track"><div className="track-label">V1</div><div className="track-content">{videoUrl?<div className="clip-block">{fileName}</div>:<div className="track-empty">Import footage to begin</div>}</div></div></div>
         <section className="depth-card">
